@@ -120,34 +120,38 @@ contract TokenExchange is Ownable {
           + Ghi nhận người dùng này vừa đống bao nhiêu thanh khoản
      */
     function addLiquidity(uint max_exchange_rate, uint min_exchange_rate) 
-        external 
-        payable
+    external 
+    payable
     {
-        require(msg.value > 0, "ETH amount must be greater than 0");
-        require(eth_reserves > 0 && token_reserves > 0, "Pool does not exist");
-
         uint amountETH = msg.value;
+        require(amountETH > 0, "ETH amount must be greater than 0");
+        require(eth_reserves > 0 && token_reserves > 0, "Insufficient liquidity in the pool");
+
         uint amountTokens = (amountETH * token_reserves) / eth_reserves;
-
         require(token.balanceOf(msg.sender) >= amountTokens, "Insufficient token balance");
-        require(token.allowance(msg.sender, address(this)) >= amountTokens, "Token allowance too low");
 
-        token.transferFrom(msg.sender, address(this), amountTokens);
-
-        uint current_exchange_rate = (token_reserves * multiplier) / eth_reserves;
+        // Calculate the current exchange rate before transferring tokens
+        uint current_exchange_rate = ((eth_reserves / 10**18) * multiplier) / token_reserves;
+        console.log("eth_reserves:", eth_reserves);
+        console.log("token_reserves:", token_reserves);
+        console.log("Current Exchange Rate:", current_exchange_rate);
         require(current_exchange_rate <= max_exchange_rate, "Slippage too high");
         require(current_exchange_rate >= min_exchange_rate, "Slippage too low");
+
 
         uint shares_to_mint = (amountETH * total_shares) / eth_reserves;
         require(shares_to_mint > 0, "Zero LP shares");
 
+        if (lps[msg.sender] == 0) {
+            lp_providers.push(msg.sender);
+        }
         lps[msg.sender] += shares_to_mint;
         total_shares += shares_to_mint;
-
+        // update pool state
         eth_reserves += amountETH;
         token_reserves += amountTokens;
-
-        lp_providers.push(msg.sender);
+        // Transfer tokens after slippage checks
+        token.transferFrom(msg.sender, address(this), amountTokens);
     }
 
 
@@ -181,7 +185,7 @@ contract TokenExchange is Ownable {
         require(token_reserves - amountTokens > 0, "Cannot empty token reserves");
 
         // Calculate the exchange rate after removing liquidity
-        uint current_exchange_rate = (eth_reserves * multiplier) / token_reserves;
+        uint current_exchange_rate = ((eth_reserves / 10 ** 18) * multiplier) / token_reserves;
         require(current_exchange_rate <= max_exchange_rate, "Slippage too high");
         require(current_exchange_rate >= min_exchange_rate, "Slippage too low");
         // Calculate LP rewards from fee reserves
@@ -191,8 +195,6 @@ contract TokenExchange is Ownable {
         // Update state
         lps[msg.sender] -= shares_to_burn;
         total_shares -= shares_to_burn;
-        eth_reserves -= amountETH;
-        token_reserves -= amountTokens;
         eth_fee_reserves -= rewardEth;
         token_fee_reserves -= rewardTokens;
 
@@ -206,6 +208,8 @@ contract TokenExchange is Ownable {
                 }
             }
         }
+        eth_reserves -= amountETH;
+        token_reserves -= amountTokens;
 
         // Transfer ETH and Tokens to the user
         payable(msg.sender).transfer(amountETH + rewardEth);
@@ -230,7 +234,7 @@ contract TokenExchange is Ownable {
 
 
         // Calculate the exchange rate
-        uint current_exchange_rate = eth_reserves * multiplier / token_reserves;
+        uint current_exchange_rate = ((eth_reserves / 10 ** 18) * multiplier) / token_reserves;
 
         require(current_exchange_rate <= max_exchange_rate, "Slippage: Exchange rate too high");
         require(current_exchange_rate >= min_exchange_rate, "Slippage: Exchange rate too low");
@@ -241,8 +245,6 @@ contract TokenExchange is Ownable {
 
         // Update state
         lps[msg.sender] = 0;
-        eth_reserves -= amountETH;
-        token_reserves -= amountTokens;
         total_shares -= userShares;
         eth_fee_reserves -= rewardEth;
         token_fee_reserves -= rewardTokens;
@@ -255,6 +257,8 @@ contract TokenExchange is Ownable {
             }
         }
         
+        eth_reserves -= amountETH;
+        token_reserves -= amountTokens;
         // transfer
         payable(msg.sender).transfer(amountETH + rewardEth);
         token.transfer(msg.sender, amountTokens + rewardTokens);
@@ -275,15 +279,15 @@ contract TokenExchange is Ownable {
     function swapTokensForETH(uint amountTokens, uint max_exchange_rate)
         external 
         payable
-    {
-        require(amountTokens > 0, "amountTokens must be greater than 0");
-        require(token.allowance(msg.sender, address(this)) >= amountTokens, "Insufficient allowance");
+    {   
 
+        require(amountTokens > 0, "amountTokens must be greater than 0");
+        require(token.balanceOf(msg.sender) >= amountTokens, "Insufficient token balance");
         // Transfer tokens from user to contract
         token.transferFrom(msg.sender, address(this), amountTokens);
 
         // Apply swap fee
-        uint fee = (amountTokens * swap_fee_numerator) / swap_fee_denominator;
+        uint fee = (amountTokens * swap_fee_numerator) / swap_fee_denominator ;
         uint amountTokensAfterFee = amountTokens - fee;
         token_fee_reserves += fee;
 
@@ -291,12 +295,18 @@ contract TokenExchange is Ownable {
         uint amountETH = (eth_reserves * amountTokensAfterFee) / (token_reserves + amountTokensAfterFee);
 
         // Calculate the current exchange rate
-        uint current_exchange_rate = (token_reserves * multiplier) / eth_reserves;
+    
+        uint current_exchange_rate = ((eth_reserves / 10 ** 18) * multiplier) / token_reserves;
+        console.log("Max Exchange Rate:", max_exchange_rate);
         require(current_exchange_rate <= max_exchange_rate, "Slippage: Exchange rate too high");
 
-        // Update reserves
+
         eth_reserves -= amountETH;
         token_reserves += amountTokensAfterFee;
+        console.log("eth_reserves:", eth_reserves);
+        console.log("amountETH:", amountETH);
+        console.log("fee_reserves:", amountTokensAfterFee);
+        console.log("token_reserves:", token_reserves);
     
         // Transfer ETH to the user
         payable(msg.sender).transfer(amountETH);
@@ -307,8 +317,8 @@ contract TokenExchange is Ownable {
     // ETH is sent to contract as msg.value
     // You can change the inputs, or the scope of your function, as needed.
     function swapETHForTokens(uint max_exchange_rate)
-        external
-        payable 
+    external
+    payable 
     {
         require(msg.value > 0, "ETH amount must be greater than 0");
 
@@ -317,19 +327,24 @@ contract TokenExchange is Ownable {
         uint amountETHWithFee = amountETH - fee;
         eth_fee_reserves += fee;
 
-        uint amountTokens = (amountETHWithFee * token_reserves) / (amountETHWithFee + eth_reserves);
+        require(eth_reserves > 0 && token_reserves > 0, "Insufficient liquidity in the pool");
 
-        uint current_exchange_rate = (token_reserves * multiplier) / eth_reserves;
+        uint amountTokens = (amountETHWithFee * token_reserves) / (amountETHWithFee + eth_reserves);
+        uint current_exchange_rate = ((eth_reserves / 10 ** 18) * multiplier) / token_reserves;
         require(current_exchange_rate <= max_exchange_rate, "Slippage: Exchange rate too high");
-    
+        console.log("Current Exchange Rate:", current_exchange_rate);
+        console.log("Max Exchange Rate:", max_exchange_rate);
         require(token_reserves >= amountTokens, "Insufficient token reserves");
 
+        console.log("eth_reserves:", eth_reserves);
+        console.log("token_reserves:", token_reserves);
         eth_reserves += amountETHWithFee;
         token_reserves -= amountTokens;
+        console.log("eth_reserves:", eth_reserves);
+        console.log("token_reserves:", token_reserves);
 
         token.transfer(msg.sender, amountTokens);
     }
-
 }
 /**
  * address(this): the address of this contract - exchange contract

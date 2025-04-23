@@ -622,23 +622,27 @@ var poolState;
 
 /*** INIT ***/
 async function init() {
-    poolState = await getPoolState();
-    console.log("starting init");
-    if (poolState['token_liquidity'] === 0
-            && poolState['eth_liquidity'] === 0) {
-      // Call mint twice to make sure mint can be called mutliple times prior to disable_mint
-      // total_supply is 10^5 which we represent as 10**5
-      // Note a 10**5 off
-      const total_supply = 100000;
-      await token_contract.connect(provider.getSigner(defaultAccount)).mint(total_supply / 2);
-		  await token_contract.connect(provider.getSigner(defaultAccount)).mint(total_supply / 2);
-		  await token_contract.connect(provider.getSigner(defaultAccount)).disable_mint();
-      await token_contract.connect(provider.getSigner(defaultAccount)).approve(exchange_address, total_supply);
-      // initialize pool with equal amounts of ETH and tokens, so exchange rate begins as 1:1
-      await exchange_contract.connect(provider.getSigner(defaultAccount)).createPool(5000, { value: ethers.utils.parseEther("5000")});
-      console.log("init finished");
-    }
+  console.log("starting init");
+  poolState = await getPoolState();
+  if (poolState['token_liquidity'] === 0 && poolState['eth_liquidity'] === 0) {
+    const total_supply = 100000;
+
+    await token_contract.connect(provider.getSigner(defaultAccount)).mint(total_supply / 2);
+    await token_contract.connect(provider.getSigner(defaultAccount)).mint(total_supply / 2);
+    await token_contract.connect(provider.getSigner(defaultAccount)).disable_mint();
+
+    await token_contract.connect(provider.getSigner(defaultAccount)).approve(exchange_address, total_supply);
+
+    await exchange_contract.connect(provider.getSigner(defaultAccount)).createPool(
+      5000, 
+      { value: ethers.utils.parseEther("5000") }
+    );
+
+    console.log("init finished");
+  }
+
 }
+
 
 async function getPoolState() {
     // read pool balance for each type of liquidity:
@@ -664,96 +668,72 @@ async function getPoolState() {
 // Be sure to divide by 100 for your calculations.
 const exchange_rate_multiplier = 10 ** 5;
 
-/*** ADD LIQUIDITY ***/
-async function addLiquidity(amountEth, maxSlippagePct) {
-  const maxRate = (1 + maxSlippagePct / 100) * exchange_rate_multiplier;
-  const minRate = (1 - maxSlippagePct / 100) * exchange_rate_multiplier;
-
-  try {
-    const approveTx = await token_contract
-      .connect(provider.getSigner(defaultAccount))
-      .approve(exchange_address, amountEth);
-    await approveTx.wait();
-
-    const tx = await exchange_contract
-      .connect(provider.getSigner(defaultAccount))
-      .addLiquidity(maxRate, minRate, { value: amountEth });
-
-    await tx.wait();
-    console.log("Added liquidity:", ethers.utils.formatEther(amountEth), "ETH");
-  } catch (err) {
-    console.error("Add liquidity failed:", err);
-  }
+async function getExchangeRate(maxSlippagePct) {
+  let maxRate = (1 + maxSlippagePct / 100) * exchange_rate_multiplier;
+  let minRate = (1 - maxSlippagePct / 100) * exchange_rate_multiplier;
+  return {
+    maxRate: maxRate,
+    minRate: minRate,
+  };
 }
-
+async function addLiquidity(amountEth, maxSlippagePct) {
+  if (amountEth <= 0) {
+    console.error("Amount must be greater than 0");
+    return;
+  }
+  let rates = await getExchangeRate(maxSlippagePct);
+  await exchange_contract.connect(provider.getSigner(defaultAccount)).addLiquidity(rates.maxRate, rates.minRate, { value: ethers.utils.parseEther(amountEth.toString())});
+}
 /*** REMOVE LIQUIDITY ***/
 async function removeLiquidity(amountEth, maxSlippagePct) {
-  const maxRate = (1 + maxSlippagePct / 100) * exchange_rate_multiplier;
-  const minRate = (1 - maxSlippagePct / 100) * exchange_rate_multiplier;
-  try {
-    const tx = await exchange_contract
-      .connect(provider.getSigner(defaultAccount))
-      .removeLiquidity(amountEth, maxRate, minRate);
-
-    await tx.wait();
-    console.log("Removed liquidity:", ethers.utils.formatEther(amountEth), "ETH");
-  } catch (err) {
-    console.error("Remove liquidity failed:", err);
+  if (amountEth <= 0) {
+    console.error("Amount must be greater than 0");
+    return;
   }
+  let rates = await getExchangeRate(maxSlippagePct);
+  await exchange_contract.connect(provider.getSigner(defaultAccount)).removeLiquidity(ethers.utils.parseEther(amountEth.toString()), rates.maxRate, rates.minRate);
+
 }
 
 /*** REMOVE ALL LIQUIDITY ***/
 async function removeAllLiquidity(maxSlippagePct) {
-  const maxRate = (1 + maxSlippagePct / 100) * exchange_rate_multiplier;
-  const minRate = (1 - maxSlippagePct / 100) * exchange_rate_multiplier;
-
-  try {
-    const tx = await exchange_contract
-      .connect(provider.getSigner(defaultAccount))
-      .removeAllLiquidity(maxRate, minRate);
-
-    await tx.wait();
-    console.log("Removed all liquidity");
-  } catch (err) {
-    console.error("Remove all liquidity failed:", err);
-  }
+  let rates = await getExchangeRate(maxSlippagePct);
+  await exchange_contract.connect(provider.getSigner(defaultAccount)).removeAllLiquidity(rates.maxRate, rates.minRate);
+  console.log("Removed all liquidity");
 }
 
 /*** SWAP: Token -> ETH ***/
 async function swapTokensForETH(amountToken, maxSlippagePct) {
-  const maxRate = (1 + maxSlippagePct / 100) * exchange_rate_multiplier;
-
-  try {
-    const approveTx = await token_contract
-      .connect(provider.getSigner(defaultAccount))
-      .approve(exchange_address, amountToken);
-    await approveTx.wait();
-
-    const tx = await exchange_contract
-      .connect(provider.getSigner(defaultAccount))
-      .swapTokensForETH(amountToken, maxRate);
-
-    await tx.wait();
-    console.log(`Swapped ${ethers.utils.formatEther(amountToken)} ${token_symbol} for ETH`);
-  } catch (err) {
-    console.error("Token to ETH swap failed:", err);
+  if (amountToken <= 0) {
+    console.error("Amount must be greater than 0");
+    return;
   }
+
+  // Fetch rates just before the transaction
+  let rates = await getExchangeRate(maxSlippagePct);
+  console.log("Calculated Rates:", rates);
+
+  // Approve the required token amount
+  await token_contract.connect(provider.getSigner(defaultAccount)).approve(
+    exchange_address,
+    ethers.utils.parseEther(amountToken.toString())
+  );
+
+  // Call swapTokensForETH with the calculated maxRate
+  await exchange_contract.connect(provider.getSigner(defaultAccount)).swapTokensForETH(
+    ethers.utils.parseEther(amountToken.toString()),
+    rates.maxRate
+  );
 }
 
 /*** SWAP: ETH -> Token ***/
 async function swapETHForTokens(amountEth, maxSlippagePct) {
-  const maxRate = (1 + maxSlippagePct / 100) * exchange_rate_multiplier;
-
-  try {
-    const tx = await exchange_contract
-      .connect(provider.getSigner(defaultAccount))
-      .swapETHForTokens(maxRate, { value: amountEth });
-
-    await tx.wait();
-    console.log(`Swapped ${ethers.utils.formatEther(amountEth)} ETH for ${token_symbol}`);
-  } catch (err) {
-    console.error("ETH to Token swap failed:", err);
+  if (amountEth <= 0) {
+    console.error("Amount must be greater than 0");
+    return;
   }
+  let rates = await getExchangeRate(maxSlippagePct);
+  await exchange_contract.connect(provider.getSigner(defaultAccount)).swapETHForTokens(rates.maxRate, { value: ethers.utils.parseEther(amountEth.toString()) });
 }
 
 
@@ -998,6 +978,6 @@ const sanityCheck = async function() {
 // Sleep 3s to ensure init() finishes before sanityCheck() runs on first load.
 // If you run into sanityCheck() errors due to init() not finishing, please extend the sleep time.
 
-// setTimeout(function () {
-//   sanityCheck();
-// }, 10000);
+setTimeout(function () {
+  sanityCheck();
+}, 10000);
