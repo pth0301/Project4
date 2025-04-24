@@ -711,7 +711,7 @@ async function swapTokensForETH(amountToken, maxSlippagePct) {
 
   // Fetch rates just before the transaction
   let rates = await getExchangeRate(maxSlippagePct);
-  console.log("Calculated Rates:", rates);
+  // console.log("Calculated Rates:", rates);
 
   // Approve the required token amount
   await token_contract.connect(provider.getSigner(defaultAccount)).approve(
@@ -914,9 +914,13 @@ const sanityCheck = async function() {
       var state1 = await getPoolState();
       var expected_tokens_received = 100 * (1 - swap_fee) * start_state.token_eth_rate;
       var user_tokens1 = await token_contract.connect(provider.getSigner(defaultAccount)).balanceOf(defaultAccount);
+      console.log(Math.abs((start_state.token_liquidity - expected_tokens_received) - state1.token_liquidity));
+      console.log((state1.eth_liquidity - start_state.eth_liquidity));
+      console.log(Math.abs(Number(start_tokens) + expected_tokens_received - Number(user_tokens1)));
+
       score += check("Testing simple exchange of ETH to token", swap_fee[0], 
         Math.abs((start_state.token_liquidity - expected_tokens_received) - state1.token_liquidity) < 5 &&
-        (state1.eth_liquidity - start_state.eth_liquidity) === 100 &&
+        (state1.eth_liquidity - start_state.eth_liquidity) === 100 && // ? not substract fee
         Math.abs(Number(start_tokens) + expected_tokens_received - Number(user_tokens1)) < 5);
       
       await swapTokensForETH("90", "1");
@@ -972,7 +976,6 @@ const sanityCheck = async function() {
         Number(user_tokens6) > Number(user_tokens5) + 45 ); 
   }
   console.log("Final score: " + score + "/50");
-
 }
 
 // Sleep 3s to ensure init() finishes before sanityCheck() runs on first load.
