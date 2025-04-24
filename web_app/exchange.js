@@ -669,8 +669,8 @@ async function getPoolState() {
 const exchange_rate_multiplier = 10 ** 5;
 
 async function getExchangeRate(maxSlippagePct) {
-  let maxRate = (1 + maxSlippagePct / 100) * exchange_rate_multiplier;
-  let minRate = (1 - maxSlippagePct / 100) * exchange_rate_multiplier;
+  let maxRate = Math.floor((1 + maxSlippagePct / 100) * exchange_rate_multiplier);
+  let minRate = Math.floor((1 - maxSlippagePct / 100) * exchange_rate_multiplier);
   return {
     maxRate: maxRate,
     minRate: minRate,
@@ -716,12 +716,12 @@ async function swapTokensForETH(amountToken, maxSlippagePct) {
   // Approve the required token amount
   await token_contract.connect(provider.getSigner(defaultAccount)).approve(
     exchange_address,
-    ethers.utils.parseEther(amountToken.toString())
+    amountToken
   );
 
   // Call swapTokensForETH with the calculated maxRate
   await exchange_contract.connect(provider.getSigner(defaultAccount)).swapTokensForETH(
-    ethers.utils.parseEther(amountToken.toString()),
+    amountToken,
     rates.maxRate
   );
 }

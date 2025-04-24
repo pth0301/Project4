@@ -224,6 +224,8 @@ contract TokenExchange is Ownable {
     {
         /******* TODO: Implement this function *******/
         uint userShares = lps[msg.sender];
+        console.log("userShares:", userShares);
+        
         require(userShares > 0, "Not a liquidity provider");
 
         uint amountETH = (userShares * eth_reserves) / total_shares;
